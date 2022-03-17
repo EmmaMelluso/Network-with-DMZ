@@ -43,7 +43,7 @@ docker run --privileged --sysctl net.ipv4.ip_forward=1 --network=rete_esterna --
 ##############################################################################################################################
 #run immagine firewall interno e connessione a rete interna						                     #
 ##############################################################################################################################
-docker run --privileged --sysctl net.ipv4.ip_forward=1 --network=rete_interna --ip 192.1.3.5 -td --name=firewall2 customfirewall bash
+docker run --privileged --sysctl net.ipv4.ip_forward=1 --network=rete_interna --ip 192.1.3.6 -td --name=firewall2 customfirewall bash
 
 ##############################################################################################################################
 #connetto firewall esterno a rete dmz						                                             #
