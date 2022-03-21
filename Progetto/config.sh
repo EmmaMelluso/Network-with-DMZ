@@ -31,7 +31,7 @@ docker exec --privileged -t webserver service apache2 start
 ##############################################################################################################################
 #connetto FTP server a sottorete "dmz"						                     			     #
 ##############################################################################################################################
-docker run --privileged --network=dmz --ip 192.1.2.4 -p21:21 -tdi --name=ftpserver ftpser bash
+docker run --privileged --network=dmz --ip 192.1.2.4 -p20:20 -p21:21 -tdi --name=ftpserver ftpser bash
 
 ##############################################################################################################################
 #connetto SMTP server a sottorete "dmz"						                     			     #
@@ -42,7 +42,6 @@ docker run --privileged --network=dmz --ip 192.1.2.4 -p21:21 -tdi --name=ftpserv
 #connetto DNS server a sottorete "dmz"						                     			     #
 ##############################################################################################################################
 docker run --privileged --network=dmz --ip 192.1.2.3 -p53:53/udp -tdi --name=dnsser cosmicq/docker-bind:latest bash
-
 
 ##############################################################################################################################
 #creo la sottorete "rete_interna" e gli connetto un host							             #
@@ -118,39 +117,72 @@ docker exec --privileged -t firewall2 iptables -P INPUT DROP
 docker exec --privileged -t firewall2 iptables -P OUTPUT DROP
 docker exec --privileged -t firewall2 iptables -P FORWARD DROP
 
-#Ordinare la situazione
+#Firewall Esterno (firewall1)
 
-#Regole Firewall Esterno (firewall1)
+# Protezione da syn flood
+# Vedere il rate medio per protezione adeguata
+docker exec --privileged -t firewall1 iptables -A FORWARD -p tcp --syn -m limit --limit 1/s -j ACCEPT
+docker exec --privileged -t firewall2 iptables -A FORWARD -p tcp --syn -m limit --limit 1/s -j ACCEPT
+
+# Protezione da ping of death
+# Anche qui vedi rate medio
+docker exec --privileged -t firewall1 iptables -A FORWARD -p icmp --icmp-type echo-request -m limit --limit 1/s -j ACCEPT
+docker exec --privileged -t firewall2 iptables -A FORWARD -p icmp --icmp-type echo-request -m limit --limit 1/s -j ACCEPT
+
 #1-Inoltra tutti i pacchetti provenienti dall'esterno sull'interfaccia della DMZ
 docker exec --privileged -t firewall1 iptables -t filter -A FORWARD -i eth0 -o eth1 -m state --state NEW,ESTABLISHED,RELATED -j ACCEPT
 docker exec --privileged -t firewall1 iptables -t filter -A FORWARD -i eth1 -o eth0 -m state --state ESTABLISHED,RELATED -j ACCEPT
 
-#2-Inoltro tutti i pacchetti provenienti da eth2 a eth1 
+#2-Inoltro tutti i pacchetti provenienti dall'interno eth2 a eth1 
 docker exec --privileged -t firewall1 iptables -t filter -A FORWARD -i eth2 -o eth1 -m state --state NEW,ESTABLISHED,RELATED -j ACCEPT
 docker exec --privileged -t firewall1 iptables -t filter -A FORWARD -i eth1 -o eth2 -m state --state ESTABLISHED,RELATED -j ACCEPT
 
-#Regole Firewall Interno (firewall2)
+#Firewall Interno (firewall2)
 #1-Inoltro Pacchetti icmp da rete interna a rete intermedia
 #Un host interno non puo' raggiungere un cliente che fa parte della rete esterna
-
 docker exec --privileged -t firewall2 iptables -t filter -A FORWARD -p icmp -i eth0 -o eth1 -m state --state NEW,ESTABLISHED,RELATED -j ACCEPT
 docker exec --privileged -t firewall2 iptables -t filter -A FORWARD -p icmp -i eth1 -o eth0 -m state --state ESTABLISHED,RELATED -j ACCEPT
-
-docker exec --privileged -t firewall1 iptables -t filter -A FORWARD -i eth2 -o eth1 -m state --state NEW,ESTABLISHED,RELATED -j ACCEPT
-docker exec --privileged -t firewall1 iptables -t filter -A FORWARD -i eth1 -o eth2 -m state --state ESTABLISHED,RELATED -j ACCEPT
-
+# Droppo tutti i tentativi di connessione provenienti dalla DMZ verso la rete interna (non matcha è solo un controllo ulteriore)
+docker exec --privileged -t firewall2 iptables -A FORWARD -p tcp -s 192.1.2.0/24 --syn -j DROP
 
 #Natting da qualsiasi host della rete esterna dmz
+#1-Web Server
 docker exec --privileged -t firewall1 iptables -t nat -A PREROUTING -p tcp -i eth0 --dport 80 -j DNAT --to-dest 192.1.2.2
 docker exec --privileged -t firewall1 iptables -t nat -A PREROUTING -p tcp -i eth0 --dport 443 -j DNAT --to-dest 192.1.2.2
 
-#filtraggio per evitare syn flood e ping of death 
+#2-DNS Server
+docker exec --privileged -t firewall1 iptables -t nat -A PREROUTING -p udp -i eth0 --dport 53 -j DNAT --to-dest 192.1.2.3
+
+#3-FTP Server
+docker exec --privileged -t firewall1 iptables -t nat -A PREROUTING -p tcp -i eth0 --dport 21 -j DNAT --to-dest 192.1.2.4
+
+# Elimino pacchetti non validi
+docker exec --privileged -t firewall1 iptables -A INPUT -m state --state INVALID -j DROP
+docker exec --privileged -t firewall1 iptables -A FORWARD -m state --state INVALID -j DROP
+docker exec --privileged -t firewall1 iptables -A OUTPUT -m state --state INVALID -j DROP
+
+# Elimino pacchetti non validi
+docker exec --privileged -t firewall2 iptables -A INPUT -m state --state INVALID -j DROP
+docker exec --privileged -t firewall2 iptables -A FORWARD -m state --state INVALID -j DROP
+docker exec --privileged -t firewall2 iptables -A OUTPUT -m state --state INVALID -j DROP
+
+# Security 
+docker exec --privileged -t firewall1 iptables -A FORWARD -p ip -f -j DROP
+docker exec --privileged -t firewall1 iptables -A FORWARD -p tcp --tcp-flags ALL ACK,RST,SYN,FIN -j DROP
+docker exec --privileged -t firewall1 iptables -A FORWARD -p tcp --tcp-flags SYN,FIN SYN,FIN -j DROP
+docker exec --privileged -t firewall1 iptables -A FORWARD -p tcp --tcp-flags SYN,RST SYN,RST -j DROP
+
+docker exec --privileged -t firewall2 iptables -A FORWARD -p ip -f -j DROP
+docker exec --privileged -t firewall2 iptables -A FORWARD -p tcp --tcp-flags ALL ACK,RST,SYN,FIN -j DROP
+docker exec --privileged -t firewall2 iptables -A FORWARD -p tcp --tcp-flags SYN,FIN SYN,FIN -j DROP
+docker exec --privileged -t firewall2 iptables -A FORWARD -p tcp --tcp-flags SYN,RST SYN,RST -j DROP
+
+
+#filtraggio per evitare ping of death 
 #check per ipspoofing
-#filtraggio pacchetti in cui i server della dmz tentano di stabilire connessioni con gli host interni
+#filtraggio pacchetti in cui i server della dmz tentano di stabilire connessioni con gli host interni (da impostare nel fw interno)
+#stabilire regole piu' nel dettaglio, solo per accedere ai servizi messi a disposizione
 #fare un log di tutti i pacchetti che vengono scartati (o di tutti in generale)
-
-
-
 
 #Apertura terminal in root, per testing della rete
 echo "Sono host1"

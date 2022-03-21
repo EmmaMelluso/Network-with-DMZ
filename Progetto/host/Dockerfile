@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y \
 bridge-utils \
 net-tools \
 iputils-ping \
-nmap 
+nmap \
+hping3
 
 CMD echo "Ubuntu Host"
