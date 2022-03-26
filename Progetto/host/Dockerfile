@@ -9,6 +9,8 @@ bridge-utils \
 net-tools \
 iputils-ping \
 nmap \
-hping3
+hping3 \
+ftp \
+wget
 
 CMD echo "Ubuntu Host"

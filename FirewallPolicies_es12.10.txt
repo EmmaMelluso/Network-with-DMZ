@@ -18,3 +18,13 @@ REGOLE DI SICUREZZA DA AGGIUNGERE.
 8. La gestione e l'aggiornamento di informazioni sui server della DMZ è consentita usando una connessione sicura (secure shell conn) da un set di utenti (host interni) autorizzati. Suggerisce anche di differenziare gli host interni in base al loro ruolo.
 
 9. Le management request gestite tramite il protocollo SNMP sono permesse agli host interni che si occupano del management della rete verso i firewalls. Anche i firewall sono configurati in modo da mandare notifiche di particolari eventi ai management hosts.
+
+
+
+-------------------------------
+VEDI ULOGD2 
+https://kb.gtkc.net/iptables-with-ulogd-quick-howto/
+con questa configurazione esce la cartella di log, ma i log non vengono salvati 
+Due motivi:
+1. Non scriviamo bene e al posto giusto la regola di log
+2. ancora manca qualcosa nella configurazione
