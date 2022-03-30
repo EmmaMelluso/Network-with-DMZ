@@ -10,7 +10,6 @@ net-tools \
 iputils-ping \
 nmap \
 hping3 \
-ftp \
-wget
+ftp 
 
 CMD echo "Ubuntu Host"
