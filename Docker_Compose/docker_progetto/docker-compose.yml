@@ -1,0 +1,96 @@
+version: "3"
+
+services:
+    cliente1: 
+        image: emmame/simpleubuntu
+        container_name: c1-esterno 
+        tty: true
+        stdin_open: true
+        privileged: true
+        command: bash -c "route add default gw f1-esterno && bash"
+        networks:
+            net-esterna:
+                ipv4_address: 192.2.1.2
+
+    firewall1:
+        image: emmame/firewall_ulogd2
+        container_name: f1-esterno
+        tty: true
+        stdin_open: true
+        privileged: true
+        command: bash -c "route add default gw f2-interno && service ulogd2 restart && bash"
+        sysctls:
+            - net.ipv4.ip_forward=1
+        networks:
+            net-esterna:
+                ipv4_address: 192.2.1.5
+            net-dmz:
+                ipv4_address: 192.2.2.5
+            net-intermedia:
+                ipv4_address: 192.2.4.5
+
+    webserver:
+        image: linode/lamp
+        stdin_open: true
+        privileged: true
+        ports:
+            - '80:80/tcp'
+            - '443:443/tcp'
+        container_name: webserver1
+        tty: true
+        command: bash -c "service apache2 start && route add default gw f1-esterno && bash"
+        networks:
+            net-dmz:
+                ipv4_address: 192.2.2.2
+
+    firewall2:
+             image: emmame/firewall_ulogd2
+             container_name: f2-interno
+             tty: true
+             stdin_open: true
+             privileged: true
+             command: bash -c "route add default gw f1-esterno && service ulogd2 restart && bash"
+             sysctls:
+                - net.ipv4.ip_forward=1
+             networks:
+                net-interna:
+                    ipv4_address: 192.2.3.6
+                net-intermedia:
+                    ipv4_address: 192.2.4.6
+
+    hostint1:
+        image: emmame/simpleubuntu
+        container_name: h1-interno 
+        tty: true
+        privileged: true
+        stdin_open: true
+        command: bash -c "route add default gw f2-interno && bash"
+        networks:
+            net-interna:
+                ipv4_address: 192.2.3.2
+                
+networks:
+    net-esterna:
+        name: net-192.2.1.0 
+        ipam:
+            config:
+                - subnet: 192.2.1.0/24
+                  gateway: 192.2.1.1
+    net-dmz:
+        name: net-192.2.2.0
+        ipam:
+            config:
+                - subnet: 192.2.2.0/24
+                  gateway: 192.2.2.1
+    net-intermedia:
+        name: net-192.2.4.0
+        ipam:
+            config:
+                - subnet: 192.2.4.0/24
+                  gateway: 192.2.4.1
+    net-interna:
+        name: net-192.2.3.0
+        ipam:
+            config:
+                - subnet: 192.2.3.0/24
+                  gateway: 192.2.3.1
