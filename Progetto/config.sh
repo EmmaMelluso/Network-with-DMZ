@@ -1,10 +1,6 @@
 #!/bin/bash
 
 #Build dockerfile
-cd firewall/
-./build.sh
-cd ..
-
 cd host/
 ./build.sh
 cd ..
@@ -14,7 +10,6 @@ cd ftpimmage/
 cd ..
 
 						#Configurazione rete aziendale
-
 ##############################################################################################################################
 #				Creo la sottorete "rete_esterna" e gli connetto un host					     #
 ##############################################################################################################################
@@ -22,21 +17,13 @@ docker network create --driver bridge --subnet=192.1.1.0/24 rete_esterna
 docker run --privileged --network=rete_esterna --ip 192.1.1.2 -td --name=cliente1 hostubuntu bash
 
 ##############################################################################################################################
-#				Creo la sottorete "dmz" e gli connetto un webserver					     #
+#			Creo la sottorete "dmz" e gli connetto un webserver, server FTP e server DNS			     #
 ##############################################################################################################################
 docker network create --driver bridge --subnet=192.1.2.0/24 dmz
-docker run --privileged --network=dmz --ip 192.1.2.2 -p80:80 -p443:443 -tdi --name=webserver linode/lamp bash
+docker run  --privileged --network=dmz --ip 192.1.2.2 -p80:80 -p443:443 -tdi --name=webserver linode/lamp bash
 docker exec --privileged -t webserver service apache2 start
-
-##############################################################################################################################
-#				Connetto FTP server a sottorete "dmz"						             #
-##############################################################################################################################
-docker run --privileged --network=dmz --ip 192.1.2.4 -p20:20 -p21:21 -tdi --name=ftpserver ftpser bash
-
-##############################################################################################################################
-#				Connetto DNS server a sottorete "dmz"						             #
-##############################################################################################################################
-docker run --privileged --network=dmz --ip 192.1.2.3 -p53:53/udp -tdi --name=dnsser cosmicq/docker-bind:latest bash
+docker run  --privileged --network=dmz --ip 192.1.2.4 -p20:20 -p21:21 -tdi --name=ftpserver ftpser bash
+docker run  --privileged --network=dmz --ip 192.1.2.3 -p53:53/udp -tdi --name=dnsser cosmicq/docker-bind:latest bash
 
 ##############################################################################################################################
 #				Creo la sottorete "rete_interna" e gli connetto un host				             #
@@ -45,52 +32,42 @@ docker network create --driver bridge --subnet=192.1.3.0/24 rete_interna
 docker run --privileged --network=rete_interna --ip 192.1.3.2 -td --name=host1 hostubuntu bash
 
 ##############################################################################################################################
-#				Creo la sottorete "rete_intermedia"						             #
-##############################################################################################################################
-docker network create --driver bridge --subnet=192.1.4.0/24 rete_intermedia
-
-##############################################################################################################################
 #				Run immagine firewall esterno e connessione a rete esterna				     #
 ##############################################################################################################################
-docker run --privileged --sysctl net.ipv4.ip_forward=1 --network=rete_esterna --ip 192.1.1.5 -td --name=firewall1 customfirewall bash
+docker run  --privileged --sysctl net.ipv4.ip_forward=1 --network=rete_esterna --ip 192.1.1.5 -td --name=firewall1 emmame/firewall_ulogd2 bash
+docker exec --privileged -t firewall1 service ulogd2 restart
 
 ##############################################################################################################################
 #				Run immagine firewall interno e connessione a rete interna				     #
 ##############################################################################################################################
-docker run --privileged --sysctl net.ipv4.ip_forward=1 --network=rete_interna --ip 192.1.3.6 -td --name=firewall2 customfirewall bash
+docker run  --privileged --sysctl net.ipv4.ip_forward=1 --network=rete_interna --ip 192.1.3.6 -td --name=firewall2 emmame/firewall_ulogd2 bash
+docker exec --privileged -t firewall2 service ulogd2 restart
 
 ##############################################################################################################################
-#				Connetto firewall esterno a rete dmz						             #
+#				Connetto firewall esterno e interno a rete dmz						     #
 ##############################################################################################################################
 docker network connect --ip 192.1.2.5 dmz firewall1
+docker network connect --ip 192.1.2.6 dmz firewall2
 
 ##############################################################################################################################
-#				Connetto firewall esterno e interno a rete intermedia					     #
+#				Assegno i gateway di default					                             #
 ##############################################################################################################################
-docker network connect --ip 192.1.4.5 rete_intermedia firewall1
-docker network connect --ip 192.1.4.6 rete_intermedia firewall2
-
-##############################################################################################################################
-#				Assegno i gateway di default					                            				     #
-##############################################################################################################################
-
-docker exec firewall1 route add default gw firewall2
-docker exec firewall2 route add default gw firewall1
-docker exec cliente1  route add default gw firewall1
-docker exec host1     route add default gw firewall2
-docker exec webserver route add default gw firewall1
-docker exec dnsser route add default gw firewall1
-docker exec ftpserver route add default gw firewall1
-
+docker exec cliente1  route add default   gw firewall1
+docker exec host1     route add default   gw firewall2
+docker exec webserver route add 192.1.1.2 gw firewall1
+docker exec webserver route add 192.1.3.2 gw firewall2
+docker exec dnsser    route add 192.1.1.2 gw firewall1
+docker exec dnsser    route add 192.1.3.2 gw firewall2
+docker exec ftpserver route add 192.1.1.2 gw firewall1
+docker exec ftpserver route add 192.1.3.2 gw firewall2
 
 echo "Ispezione reti:"
 docker network inspect rete_interna 
 docker network inspect rete_esterna 
 docker network inspect dmz
-docker network inspect rete_intermedia
-docker ps 
+docker ps
 
-							#SETTO IPTABLES
+					#SETTO I DUE FIREWALLS CON IPTABLES
 ##############################################################################################################################
 #				Cancellazione delle regole presenti nelle chains		                             #
 ##############################################################################################################################
@@ -116,74 +93,107 @@ docker exec --privileged -t firewall2 iptables -P INPUT DROP
 docker exec --privileged -t firewall2 iptables -P OUTPUT DROP
 docker exec --privileged -t firewall2 iptables -P FORWARD DROP
 
+# Elimino pacchetti non validi 1 - VERIFICATO
+docker exec --privileged -t firewall1 iptables -A INPUT   -m state --state INVALID -j DROP
+docker exec --privileged -t firewall1 iptables -A FORWARD -m state --state INVALID -j DROP
+docker exec --privileged -t firewall1 iptables -A OUTPUT  -m state --state INVALID -j DROP
 
-# docker exec --privileged -t firewall1 iptables -A OUTPUT -j NFLOG --nflog-group 32
-# docker exec --privileged -t firewall1 iptables -A INPUT -j NFLOG --nflog-group 32
-# docker exec --privileged -t firewall1 iptables -A FORWARD -j NFLOG --nflog-group 32
+# Elimino pacchetti non validi 2 - VERIFICATO
+docker exec --privileged -t firewall2 iptables -A INPUT   -m state --state INVALID -j DROP
+docker exec --privileged -t firewall2 iptables -A FORWARD -m state --state INVALID -j DROP
+docker exec --privileged -t firewall2 iptables -A OUTPUT  -m state --state INVALID -j DROP
 
-# docker exec --privileged -t firewall2 iptables -A OUTPUT -j NFLOG --nflog-group 32
-# docker exec --privileged -t firewall2 iptables -A INPUT -j NFLOG --nflog-group 32
-# docker exec --privileged -t firewall2 iptables -A FORWARD -j NFLOG --nflog-group 32
+docker exec --privileged -t firewall1 iptables -A FORWARD -f -j DROP					# Droppo pacchetti ip frammentati
+docker exec --privileged -t firewall2 iptables -A FORWARD -f -j DROP
 
+# Security  - VERIFICATO (SONO CONSIDERATI TUTTI PACCHETTI INVALIDI)												
+docker exec --privileged -t firewall1 iptables -A FORWARD -p tcp --tcp-flags ALL ACK,RST,SYN,FIN -j DROP	# Droppo pacchetti no-sense
+docker exec --privileged -t firewall1 iptables -A FORWARD -p tcp --tcp-flags ALL ALL -j DROP
+docker exec --privileged -t firewall1 iptables -A FORWARD -p tcp --tcp-flags ALL NONE -j DROP
+docker exec --privileged -t firewall1 iptables -A FORWARD -p tcp --tcp-flags SYN,FIN SYN,FIN -j DROP
+docker exec --privileged -t firewall1 iptables -A FORWARD -p tcp --tcp-flags SYN,RST SYN,RST -j DROP
 
+docker exec --privileged -t firewall2 iptables -A FORWARD -p tcp --tcp-flags ALL ACK,RST,SYN,FIN -j DROP
+docker exec --privileged -t firewall2 iptables -A FORWARD -p tcp --tcp-flags ALL ALL -j DROP
+docker exec --privileged -t firewall2 iptables -A FORWARD -p tcp --tcp-flags ALL NONE -j DROP			# Per evitare TCP null scan
+docker exec --privileged -t firewall2 iptables -A FORWARD -p tcp --tcp-flags SYN,FIN SYN,FIN -j DROP
+docker exec --privileged -t firewall2 iptables -A FORWARD -p tcp --tcp-flags SYN,RST SYN,RST -j DROP
 
-##############################################################################################################################
-#	Protezione da ipSpoofing - droppo tutti i pacchetti esterni che hanno Ip della rete interna 											             	             #
-##############################################################################################################################
+# Protezione Ip Spoofing
+# Tutti i pacchetti che provengono dall'esterno e hanno source address interno vengono scartati
 docker exec --privileged -t firewall1 iptables -A FORWARD -s 192.1.3.0/24  -i eth0 -j DROP
 
-##############################################################################################################################
-#					Protezione da syn flood							             #
-##############################################################################################################################
-docker exec --privileged -t firewall1 iptables -A FORWARD -p tcp --syn -m limit --limit 1/s -j ACCEPT
-docker exec --privileged -t firewall2 iptables -A FORWARD -p tcp --syn -m limit --limit 1/s -j ACCEPT
+# Protezione Syn Flood Attack 
+# Creo nuova catena SYN_FLOOD
+docker exec --privileged -t firewall1 iptables -N SYN_FLOOD		
+# Eseguo le regole della catena SYN_FLOOD se il pacchetto in ingresso è tcp e ha il flag syn = 1		
+docker exec --privileged -t firewall1 iptables -A FORWARD -p tcp --syn -j SYN_FLOOD		
+# Il pacchetto viene fatto passare se rispetta i limiti prefissati
+# Numero massimo di confronti al secondo (in media) = 1
+# Numero massimo di confronti iniziali (in media) = 5 default
+docker exec --privileged -t firewall1 iptables -A SYN_FLOOD -m limit --limit 1/s -j RETURN
+# Se non ha un match con la regola precedente il pacchetto viene scartato
+docker exec --privileged -t firewall1 iptables -A SYN_FLOOD -j DROP
 
-##############################################################################################################################
-#					Protezione da ping of death						             #
-##############################################################################################################################
-docker exec --privileged -t firewall1 iptables -A FORWARD -p icmp --icmp-type echo-request -m limit --limit 1/s -j ACCEPT
-docker exec --privileged -t firewall2 iptables -A FORWARD -p icmp --icmp-type echo-request -m limit --limit 1/s -j ACCEPT
+docker exec --privileged -t firewall2 iptables -N SYN_FLOOD			
+docker exec --privileged -t firewall2 iptables -A FORWARD -p tcp --syn -j SYN_FLOOD		
+docker exec --privileged -t firewall2 iptables -A SYN_FLOOD -m limit --limit 1/s -j RETURN
+docker exec --privileged -t firewall2 iptables -A SYN_FLOOD -j DROP
 
+# Protezione Ping of Death Attack
+docker exec --privileged -t firewall1 iptables -N PING_OF_DEATH
+docker exec --privileged -t firewall1 iptables -A FORWARD -p icmp -j PING_OF_DEATH
+# Accetto tutte le richieste se rispettano i limiti prefissati
+docker exec --privileged -t firewall1 iptables -A PING_OF_DEATH -p icmp --icmp-type echo-request -m limit --limit 1/s -j RETURN
+# Se non ho un match con la regola di sopra il pacchetto va necessariamente scartato
+docker exec --privileged -t firewall1 iptables -A PING_OF_DEATH -p icmp --icmp-type echo-request -j DROP
 
+docker exec --privileged -t firewall2 iptables -N PING_OF_DEATH
+docker exec --privileged -t firewall2 iptables -A FORWARD -p icmp -j PING_OF_DEATH
+docker exec --privileged -t firewall2 iptables -A PING_OF_DEATH -p icmp --icmp-type echo-request -m limit --limit 1/s -j RETURN
+docker exec --privileged -t firewall2 iptables -A PING_OF_DEATH -p icmp --icmp-type echo-request -j DROP
 
-						#Firewall Esterno (firewall1)
-						##############################################################################################################################
-#	1-Accetto in ingresso tutti i pacchetti provenienti dall'esterno (eth0) , protocollo TCP e dest port 80              #
-##############################################################################################################################
-#potrebbe essere inutile
-docker exec --privileged -t firewall1 iptables -t filter -A FORWARD -p tcp -i eth0 --dport www,ftp -m state --state NEW -j ACCEPT
+# Droppo tutti i pacchetti provenienti dall'esterno e che hanno per ip destinazione quello di un host interno
+docker exec --privileged -t firewall1 iptables -t filter -A FORWARD -i eth0 -o eth2 -m state --state NEW,ESTABLISHED,RELATED -j DROP
 
-##############################################################################################################################
-#	1-Accetto in ingresso tutti i pacchetti provenienti dall'esterno (eth0) , protocollo TCP e dest port 80              #
-##############################################################################################################################
-#potrebbe essere inutile
-docker exec --privileged -t firewall1 iptables -t filter -A FORWARD -p udp -i eth0 --dport domain -m state --state NEW -j ACCEPT
+# Evito UDP-flood Attacks
+docker exec --privileged -t firewall1 iptables -N UDP_FLOOD
+docker exec --privileged -t firewall1 iptables -A FORWARD -p udp -j UDP_FLOOD
+docker exec --privileged -t firewall1 iptables -A UDP_FLOOD -p udp -m limit --limit 1/s -j RETURN
+docker exec --privileged -t firewall1 iptables -A UDP_FLOOD -j DROP
 
-##############################################################################################################################
-#	1-Inoltra tutti i pacchetti provenienti dall'esterno (eth0) sull'interfaccia della DMZ (eth1)	                     #
-##############################################################################################################################
+docker exec --privileged -t firewall2 iptables -N UDP_FLOOD
+docker exec --privileged -t firewall2 iptables -A FORWARD -p udp -j UDP_FLOOD
+docker exec --privileged -t firewall2 iptables -A UDP_FLOOD -p udp -m limit --limit 1/s -j RETURN
+docker exec --privileged -t firewall2 iptables -A UDP_FLOOD -j DROP
+
+# Accetto tutto il traffico diretto alla porta 53 protocollo udp
+docker exec --privileged -t firewall1 iptables -t filter -A FORWARD -i eth0 -o eth1 -p udp -d 192.1.2.3 --dport 53 -j ACCEPT
+docker exec --privileged -t firewall1 iptables -t filter -A FORWARD -i eth1 -o eth0 -p udp -j ACCEPT
+
+# Droppo tutto il resto del traffico UDP
+docker exec --privileged -t firewall1 iptables -t filter -A FORWARD -i eth0 -o eth1 -p udp -j DROP
+
+docker exec --privileged -t firewall2 iptables -t filter -A FORWARD -i eth0 -o eth1 -p udp -d 192.1.2.3 --dport 53 -j ACCEPT
+docker exec --privileged -t firewall2 iptables -t filter -A FORWARD -i eth1 -o eth0 -p udp -j ACCEPT
+docker exec --privileged -t firewall2 iptables -t filter -A FORWARD -i eth0 -o eth1 -p udp -j DROP
+
+# Inoltro tutto il resto dei pacchetti provenienti dall'esterno (eth0) sull'interfaccia della DMZ (eth1)	                     
 docker exec --privileged -t firewall1 iptables -t filter -A FORWARD -i eth0 -o eth1 -m state --state NEW,ESTABLISHED,RELATED -j ACCEPT
 docker exec --privileged -t firewall1 iptables -t filter -A FORWARD -i eth1 -o eth0 -m state --state ESTABLISHED,RELATED -j ACCEPT
 
-##############################################################################################################################
-#	2-Inoltro tutti i pacchetti provenienti dall'interno (eth2) sull'interfaccia della DMZ (eth1) 	                     #
-##############################################################################################################################
-docker exec --privileged -t firewall1 iptables -t filter -A FORWARD -i eth2 -o eth1 -m state --state NEW,ESTABLISHED,RELATED -j ACCEPT
-docker exec --privileged -t firewall1 iptables -t filter -A FORWARD -i eth1 -o eth2 -m state --state ESTABLISHED,RELATED -j ACCEPT
+# Inoltro tutto il resto dei pacchetti provenienti dall'esterno (eth0) sull'interfaccia della DMZ (eth1)	                     
+docker exec --privileged -t firewall2 iptables -t filter -A FORWARD -i eth0 -o eth1 -m state --state NEW,ESTABLISHED,RELATED -j ACCEPT
+docker exec --privileged -t firewall2 iptables -t filter -A FORWARD -i eth1 -o eth0 -m state --state ESTABLISHED,RELATED -j ACCEPT
 
-
-						#Firewall Interno (firewall2)
-##############################################################################################################################
-#	1-Inoltro Pacchetti icmp da rete interna (eth0) a rete intermedia (eth1)				 	     #
-##############################################################################################################################
-#Un host interno non puo' raggiungere un cliente che fa parte della rete esterna
-docker exec --privileged -t firewall2 iptables -t filter -A FORWARD -p icmp -i eth0 -o eth1 -m state --state NEW,ESTABLISHED,RELATED -j ACCEPT
-docker exec --privileged -t firewall2 iptables -t filter -A FORWARD -p icmp -i eth1 -o eth0 -m state --state ESTABLISHED,RELATED -j ACCEPT
-# Droppo tutti i tentativi di connessione provenienti dalla DMZ verso la rete interna (non matcha è solo un controllo ulteriore)
+# Droppo tutti i tentativi di connessione su tcp provenienti dalla DMZ 
 docker exec --privileged -t firewall2 iptables -A FORWARD -p tcp -s 192.1.2.0/24 --syn -j DROP
 
+# Droppo tentativi di connessione rete interna - rete esterna
+docker exec --privileged -t firewall2 iptables -A FORWARD -d 192.1.1.0/24 -j DROP
 
-					#Natting da qualsiasi host della rete esterna dmz
+
+				#Natting da qualsiasi host della rete esterna dmz
 ##############################################################################################################################
 #							1-Web Server				                  	     #
 ##############################################################################################################################
@@ -200,44 +210,3 @@ docker exec --privileged -t firewall1 iptables -t nat -A PREROUTING -p udp -i et
 ##############################################################################################################################
 docker exec --privileged -t firewall1 iptables -t nat -A PREROUTING -p tcp -i eth0 --dport 21 -j DNAT --to-dest 192.1.2.4
 docker exec --privileged -t firewall1 iptables -t nat -A PREROUTING -p tcp -i eth0 --dport 20 -j DNAT --to-dest 192.1.2.4
-
-
-# Elimino pacchetti non validi
-docker exec --privileged -t firewall1 iptables -A INPUT -m state --state INVALID -j DROP
-docker exec --privileged -t firewall1 iptables -A FORWARD -m state --state INVALID -j DROP
-docker exec --privileged -t firewall1 iptables -A OUTPUT -m state --state INVALID -j DROP
-
-# Elimino pacchetti non validi
-docker exec --privileged -t firewall2 iptables -A INPUT -m state --state INVALID -j DROP
-docker exec --privileged -t firewall2 iptables -A FORWARD -m state --state INVALID -j DROP
-docker exec --privileged -t firewall2 iptables -A OUTPUT -m state --state INVALID -j DROP
-
-# Security 
-docker exec --privileged -t firewall1 iptables -A FORWARD -p ip -f -j DROP
-docker exec --privileged -t firewall1 iptables -A FORWARD -p tcp --tcp-flags ALL ACK,RST,SYN,FIN -j DROP
-docker exec --privileged -t firewall1 iptables -A FORWARD -p tcp --tcp-flags SYN,FIN SYN,FIN -j DROP
-docker exec --privileged -t firewall1 iptables -A FORWARD -p tcp --tcp-flags SYN,RST SYN,RST -j DROP
-
-docker exec --privileged -t firewall2 iptables -A FORWARD -p ip -f -j DROP
-docker exec --privileged -t firewall2 iptables -A FORWARD -p tcp --tcp-flags ALL ACK,RST,SYN,FIN -j DROP
-docker exec --privileged -t firewall2 iptables -A FORWARD -p tcp --tcp-flags SYN,FIN SYN,FIN -j DROP
-docker exec --privileged -t firewall2 iptables -A FORWARD -p tcp --tcp-flags SYN,RST SYN,RST -j DROP
-
-
-#aggiungere null attack per host windows che potrebbe essere aggiunto come host interno della rete
-#limitare piu' pacchetti da una stessa sorgente (per proteggere tutti i server della DMZ)
-
-#stabilire regole piu' nel dettaglio, solo per accedere ai servizi messi a disposizione
-#fare un log di tutti i pacchetti che vengono scartati (o di tutti in generale)
-
-#Apertura terminal in root, per testing della rete
-echo "Sono host1"
-docker exec -i -t host1 bash
-echo "Sono cliente"
-docker exec -i -t cliente1 bash
-echo "Sono webserver"
-docker exec -i -t webserver bash
-echo "Sono DNS server"
-docker exec -i -t dnsser bash
-echo "Sono FTP server"
-docker exec -i -t ftpserver bash
