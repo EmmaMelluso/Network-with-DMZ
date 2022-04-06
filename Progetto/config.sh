@@ -1,20 +1,11 @@
 #!/bin/bash
 
-#Build dockerfile
-cd host/
-./build.sh
-cd ..
-
-cd ftpimmage/
-./build.sh
-cd ..
-
 						#Configurazione rete aziendale
 ##############################################################################################################################
 #				Creo la sottorete "rete_esterna" e gli connetto un host					     #
 ##############################################################################################################################
 docker network create --driver bridge --subnet=192.1.1.0/24 rete_esterna
-docker run --privileged --network=rete_esterna --ip 192.1.1.2 -td --name=cliente1 hostubuntu bash
+docker run --privileged --network=rete_esterna --ip 192.1.1.2 -td --name=cliente1 emmame/simpleubuntu bash
 
 ##############################################################################################################################
 #			Creo la sottorete "dmz" e gli connetto un webserver, server FTP e server DNS			     #
@@ -29,7 +20,7 @@ docker run  --privileged --network=dmz --ip 192.1.2.3 -p53:53/udp -tdi --name=dn
 #				Creo la sottorete "rete_interna" e gli connetto un host				             #
 ##############################################################################################################################
 docker network create --driver bridge --subnet=192.1.3.0/24 rete_interna
-docker run --privileged --network=rete_interna --ip 192.1.3.2 -td --name=host1 hostubuntu bash
+docker run --privileged --network=rete_interna --ip 192.1.3.2 -td --name=host1 emmame/simpleubuntu bash
 
 ##############################################################################################################################
 #				Run immagine firewall esterno e connessione a rete esterna				     #
@@ -125,6 +116,7 @@ docker exec --privileged -t firewall1 iptables -A FORWARD -s 192.1.3.0/24  -i et
 
 # Protezione Syn Flood Attack 
 # Creo nuova catena SYN_FLOOD
+
 docker exec --privileged -t firewall1 iptables -N SYN_FLOOD		
 # Eseguo le regole della catena SYN_FLOOD se il pacchetto in ingresso è tcp e ha il flag syn = 1		
 docker exec --privileged -t firewall1 iptables -A FORWARD -p tcp --syn -j SYN_FLOOD		
@@ -135,18 +127,21 @@ docker exec --privileged -t firewall1 iptables -A SYN_FLOOD -m limit --limit 1/s
 # Se non ha un match con la regola precedente il pacchetto viene scartato
 docker exec --privileged -t firewall1 iptables -A SYN_FLOOD -j DROP
 
+
 docker exec --privileged -t firewall2 iptables -N SYN_FLOOD			
 docker exec --privileged -t firewall2 iptables -A FORWARD -p tcp --syn -j SYN_FLOOD		
 docker exec --privileged -t firewall2 iptables -A SYN_FLOOD -m limit --limit 1/s -j RETURN
 docker exec --privileged -t firewall2 iptables -A SYN_FLOOD -j DROP
 
 # Protezione Ping of Death Attack
+docker exec --privileged -t firewall1 iptables -A FORWARD -j NFLOG --nflog-prefix="FORWARD Log pre-regola: "
 docker exec --privileged -t firewall1 iptables -N PING_OF_DEATH
 docker exec --privileged -t firewall1 iptables -A FORWARD -p icmp -j PING_OF_DEATH
 # Accetto tutte le richieste se rispettano i limiti prefissati
 docker exec --privileged -t firewall1 iptables -A PING_OF_DEATH -p icmp --icmp-type echo-request -m limit --limit 1/s -j RETURN
 # Se non ho un match con la regola di sopra il pacchetto va necessariamente scartato
 docker exec --privileged -t firewall1 iptables -A PING_OF_DEATH -p icmp --icmp-type echo-request -j DROP
+docker exec --privileged -t firewall1 iptables -A FORWARD -j NFLOG --nflog-prefix="FORWARD Log post-regola: "
 
 docker exec --privileged -t firewall2 iptables -N PING_OF_DEATH
 docker exec --privileged -t firewall2 iptables -A FORWARD -p icmp -j PING_OF_DEATH
